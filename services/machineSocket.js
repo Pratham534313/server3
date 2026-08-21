@@ -676,6 +676,35 @@ function setupMachineSocket(
               );
 
 
+              // =================================
+              // NOTIFY WEBSITE: MACHINE ONLINE
+              // =================================
+              //
+              // IMPORTANT: without this, a website that
+              // authenticated BEFORE the RPi connected would
+              // never learn the machine came online — it only
+              // gets a connection snapshot at its own auth time
+              // and on machine DISCONNECT, never on CONNECT.
+              //
+              // =================================
+
+              broadcastToWebsite(
+                machineId,
+                {
+
+                  type:
+                    "machine_connection",
+
+                  connected:
+                    true,
+
+                  timestamp:
+                    new Date().toISOString(),
+
+                }
+              );
+
+
               return;
 
             }
