@@ -23,6 +23,11 @@ const {
   updateMachine,
 } = require("../services/machineRepository");
 
+const {
+  logCommandSent,
+  getMachineLogs,
+} = require("../services/commandLogRepository");
+
 const router =
   express.Router();
 
@@ -811,6 +816,26 @@ router.post(
 
 
       // ==================================
+      // LOG COMMAND (Postgres)
+      // ==================================
+      // Fire-and-forget: a logging failure should never
+      // block the actual machine command response.
+
+      logCommandSent(
+        machineId,
+        command,
+        req.user.uid
+      ).catch((error) => {
+
+        console.error(
+          `⚠️ Command log insert failed [${machineId}]:`,
+          error.message
+        );
+
+      });
+
+
+      // ==================================
       // RESPONSE
       // ==================================
 
@@ -844,6 +869,126 @@ router.post(
 
         message:
           "Failed to send machine command",
+
+      });
+
+    }
+
+  }
+);
+
+
+// ========================================
+// GET MACHINE COMMAND LOGS
+// ========================================
+//
+// GET /api/machine/:machineId/logs
+// GET /api/machine/:machineId/logs?date=2026-08-21
+//
+// Defaults to today (UTC) if no ?date is given.
+//
+// ========================================
+
+router.get(
+  "/:machineId/logs",
+  verifyToken,
+  async (req, res) => {
+
+    try {
+
+      const {
+        machineId,
+      } = req.params;
+
+      const {
+        date,
+      } = req.query;
+
+
+      // ==================================
+      // VALIDATE DATE FORMAT (if provided)
+      // ==================================
+
+      if (
+        date &&
+        !/^\d{4}-\d{2}-\d{2}$/.test(date)
+      ) {
+
+        return res.status(400).json({
+
+          success: false,
+
+          message:
+            "date must be in YYYY-MM-DD format",
+
+        });
+
+      }
+
+
+      // ==================================
+      // OWNERSHIP
+      // ==================================
+
+      const owner =
+        await checkMachineOwnership(
+          machineId,
+          req.user.uid
+        );
+
+
+      if (!owner) {
+
+        return res.status(403).json({
+
+          success: false,
+
+          message:
+            "You do not have access to this machine",
+
+        });
+
+      }
+
+
+      // ==================================
+      // FETCH LOGS
+      // ==================================
+
+      const logs =
+        await getMachineLogs(
+          machineId,
+          { date }
+        );
+
+
+      res.json({
+
+        success: true,
+
+        machineId,
+
+        date:
+          date ||
+          new Date().toISOString().slice(0, 10),
+
+        logs,
+
+      });
+
+    } catch (error) {
+
+      console.error(
+        "Machine logs error:",
+        error.message
+      );
+
+      res.status(500).json({
+
+        success: false,
+
+        message:
+          "Failed to get machine logs",
 
       });
 
