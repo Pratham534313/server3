@@ -21,6 +21,10 @@ const {
   checkMachineOwnership,
 } = require("./machineService");
 
+const {
+  logCommandAck,
+} = require("./commandLogRepository");
+
 
 // ========================================
 // FIREBASE AUTH
@@ -1143,6 +1147,25 @@ function setupMachineSocket(
                 "📊 Command ACK updated:",
                 state
               );
+
+
+              // =================================
+              // LOG COMMAND ACK (Postgres)
+              // =================================
+
+              logCommandAck(
+                machineId,
+                data.command,
+                data.success,
+                data.error || null
+              ).catch((error) => {
+
+                console.error(
+                  `⚠️ Command ack log failed [${machineId}]:`,
+                  error.message
+                );
+
+              });
 
 
               // =================================
