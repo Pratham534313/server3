@@ -56,6 +56,10 @@ const machineRoutes =
 const jobsRoutes =
   require("./routes/jobs");
 
+const {
+  ensureCommandLogsTable,
+} = require("./services/commandLogRepository");
+
 
 // ========================================
 // APP
@@ -200,6 +204,9 @@ console.log(
 // ========================================
 // START SERVER
 // ========================================
+
+ensureCommandLogsTable();
+
 
 server.listen(
   PORT,
