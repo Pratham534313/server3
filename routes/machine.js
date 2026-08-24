@@ -1,5 +1,7 @@
 const express = require("express");
 
+const rateLimit = require("express-rate-limit");
+
 const verifyToken =
   require("../middleware/auth");
 
@@ -28,8 +30,64 @@ const {
   getMachineLogs,
 } = require("../services/commandLogRepository");
 
+const {
+  hashMachineSecret,
+  generateMachineSecret,
+} = require("../services/machineAuth");
+
+const {
+  isValidCommand,
+} = require("../services/commandValidation");
+
 const router =
   express.Router();
+
+
+// ========================================
+// RATE LIMITERS
+// ========================================
+//
+// Pairing codes are only 6 digits (1,000,000 combinations) with
+// a 10-minute expiry — without a limiter here they're brute-
+// forceable well within that window.
+//
+// ========================================
+
+const pairLimiter = rateLimit({
+
+  windowMs: 15 * 60 * 1000, // 15 minutes
+
+  limit: 10, // 10 attempts per IP per window
+
+  standardHeaders: true,
+
+  legacyHeaders: false,
+
+  message: {
+    success: false,
+    message:
+      "Too many pairing attempts. Please try again later.",
+  },
+
+});
+
+const commandLimiter = rateLimit({
+
+  windowMs: 60 * 1000, // 1 minute
+
+  limit: 60, // generous — legitimate operation sends far fewer
+
+  standardHeaders: true,
+
+  legacyHeaders: false,
+
+  message: {
+    success: false,
+    message:
+      "Too many commands sent. Please slow down.",
+  },
+
+});
 
 
 // ========================================
@@ -196,6 +254,7 @@ router.get(
 
 router.post(
   "/pair",
+  pairLimiter,
   verifyToken,
   async (req, res) => {
 
@@ -622,14 +681,40 @@ router.post(
         );
 
 
+      // ==================================
+      // ISSUE PER-MACHINE SECRET
+      // ==================================
+      //
+      // Generated once, returned in PLAINTEXT exactly once here.
+      // Only the hash is stored. Copy this into the RPi agent's
+      // PRANOVA_MACHINE_SECRET config — it will never be shown
+      // again (use /rotate-secret to issue a new one if lost).
+      //
+      // ==================================
+
+      const machineSecret =
+        generateMachineSecret();
+
+      await updateMachine(
+        machineId,
+        {
+          machineSecretHash:
+            hashMachineSecret(machineSecret),
+        }
+      );
+
+
       res.status(201).json({
 
         success: true,
 
         message:
-          "Machine registered successfully",
+          "Machine registered successfully. Save the machineSecret " +
+          "now — it will not be shown again.",
 
         machine,
+
+        machineSecret,
 
       });
 
@@ -657,11 +742,112 @@ router.post(
 
 
 // ========================================
+// ROTATE MACHINE SECRET
+// ========================================
+//
+// Issues a brand-new per-machine secret for an already-registered
+// machine — used both to migrate machines that were registered
+// before this feature existed (still on the legacy shared secret)
+// and to rotate a secret that may have been exposed.
+//
+// Owner-only. Returns the new secret in plaintext exactly once.
+//
+// ========================================
+
+router.post(
+  "/:machineId/rotate-secret",
+  verifyToken,
+  async (req, res) => {
+
+    try {
+
+      const {
+        machineId,
+      } = req.params;
+
+
+      const owner =
+        await checkMachineOwnership(
+          machineId,
+          req.user.uid
+        );
+
+
+      if (!owner) {
+
+        return res.status(403).json({
+
+          success: false,
+
+          message:
+            "You do not have access to this machine",
+
+        });
+
+      }
+
+
+      const machineSecret =
+        generateMachineSecret();
+
+      await updateMachine(
+        machineId,
+        {
+          machineSecretHash:
+            hashMachineSecret(machineSecret),
+        }
+      );
+
+
+      console.log(
+        `🔑 Machine secret rotated [${machineId}] by ${req.user.uid}`
+      );
+
+
+      res.json({
+
+        success: true,
+
+        message:
+          "New machine secret issued. Save it now — it will not " +
+          "be shown again. Update the RPi agent's " +
+          "PRANOVA_MACHINE_SECRET and restart it.",
+
+        machineId,
+
+        machineSecret,
+
+      });
+
+    } catch (error) {
+
+      console.error(
+        "Rotate secret error:",
+        error.message
+      );
+
+      res.status(500).json({
+
+        success: false,
+
+        message:
+          "Failed to rotate machine secret",
+
+      });
+
+    }
+
+  }
+);
+
+
+// ========================================
 // SEND COMMAND
 // ========================================
 
 router.post(
   "/command",
+  commandLimiter,
   verifyToken,
   async (req, res) => {
 
@@ -729,6 +915,35 @@ router.post(
 
           message:
             "You do not have access to this machine",
+
+        });
+
+      }
+
+
+      // ==================================
+      // COMMAND ALLOWLIST
+      // ==================================
+      //
+      // Reject anything that isn't a recognized AlphaCut/FluidNC
+      // command BEFORE it's ever forwarded to the machine. See
+      // services/commandValidation.js.
+      //
+      // ==================================
+
+      if (!isValidCommand(command)) {
+
+        console.log(
+          `🚫 Rejected invalid command from ${req.user.uid} ` +
+          `→ ${machineId}: ${JSON.stringify(command).slice(0, 100)}`
+        );
+
+        return res.status(400).json({
+
+          success: false,
+
+          message:
+            "Command is not a recognized AlphaCut/FluidNC command",
 
         });
 
