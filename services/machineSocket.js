@@ -9,7 +9,7 @@ const {
 } = require("./firebase");
 
 const {
-  verifyMachine,
+  verifyMachineCredential,
 } = require("./machineAuth");
 
 const {
@@ -468,19 +468,32 @@ function setupMachineSocket(
               // -----------------------------
               // VERIFY RPI
               // -----------------------------
+              //
+              // IMPORTANT: this looks up the machine record BY
+              // requestedMachineId and verifies the secret
+              // against THAT machine's own credential (or the
+              // legacy shared secret if it hasn't been migrated
+              // yet). This is what ties the authenticated
+              // identity to the specific machineId — a caller
+              // can no longer just declare an arbitrary
+              // machineId and get treated as that machine.
+              // -----------------------------
 
-              const valid =
-                verifyMachine(
+              const authResult =
+                await verifyMachineCredential(
+                  requestedMachineId,
                   listenerId,
                   data.secret
                 );
 
 
-              if (!valid) {
+              if (!authResult.ok) {
 
                 console.log(
                   "❌ Machine authentication failed:",
-                  listenerId
+                  listenerId,
+                  "→",
+                  requestedMachineId
                 );
 
 
