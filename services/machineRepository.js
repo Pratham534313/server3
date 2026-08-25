@@ -167,7 +167,70 @@ async function createMachine(
 
 
 // ========================================
+// ENSURE MACHINE EXISTS (idempotent)
+// ========================================
+//
+// Creates a minimal unpaired machine record if (and only if) one
+// doesn't already exist for this machineId. Never touches an
+// existing record's fields. Used right after WS auth succeeds,
+// so a brand-new machine's Firestore doc exists BEFORE we try to
+// generate its pairing code or save its self-migrated secret —
+// closing the "first connection ever" timing gap.
+//
+// ========================================
+
+async function ensureMachineExists(
+  machineId
+) {
+
+  if (!machineId) {
+    throw new Error(
+      "machineId is required"
+    );
+  }
+
+  const existing =
+    await getMachine(
+      machineId
+    );
+
+  if (existing) {
+    return existing;
+  }
+
+  try {
+
+    return await createMachine(
+      machineId,
+      null,
+      "AlphaCut Machine"
+    );
+
+  } catch (error) {
+
+    // Benign race: another connection created it
+    // between our check and this call.
+    if (
+      error.message ===
+      "Machine already exists"
+    ) {
+
+      return getMachine(
+        machineId
+      );
+
+    }
+
+    throw error;
+
+  }
+
+}
+
+
+// ========================================
 // UPDATE MACHINE
+
 // ========================================
 
 async function updateMachine(
@@ -302,6 +365,8 @@ module.exports = {
   setPairingCode,
 
   createMachine,
+
+  ensureMachineExists,
 
   updateMachine,
 
