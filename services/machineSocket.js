@@ -10,6 +10,7 @@ const {
 
 const {
   verifyMachineCredential,
+  hashMachineSecret,
 } = require("./machineAuth");
 
 const {
@@ -20,6 +21,11 @@ const {
   createMachinePairingCode,
   checkMachineOwnership,
 } = require("./machineService");
+
+const {
+  getMachine: getMachineFromDb,
+  updateMachine: updateMachineRecord,
+} = require("./machineRepository");
 
 const {
   logCommandAck,
@@ -1099,6 +1105,138 @@ function setupMachineSocket(
                 }
               );
 
+
+              return;
+
+            }
+
+
+            // =================================
+            // SET SECRET (self-migration)
+            // =================================
+            //
+            // Allows an already-authenticated RPi (i.e. one that
+            // just proved its identity, even via the legacy
+            // shared secret) to issue itself a fresh, unique
+            // per-machine secret — no manual browser/token step
+            // needed.
+            //
+            // Only allowed ONCE per machine: if a per-machine
+            // secret is already set, this is refused (further
+            // rotation must go through the owner-authenticated
+            // REST endpoint, not a self-service WS message).
+            //
+            // =================================
+
+            if (
+              data.type ===
+              "set_secret" &&
+              connectionType ===
+                "machine"
+            ) {
+
+              try {
+
+                const newSecret =
+                  data.newSecret ||
+                  null;
+
+
+                if (
+                  !newSecret ||
+                  typeof newSecret !== "string" ||
+                  newSecret.length < 32
+                ) {
+
+                  sendJson(
+                    ws,
+                    {
+                      type: "secret_set",
+                      success: false,
+                      message: "newSecret must be at least 32 characters",
+                    }
+                  );
+
+                  return;
+
+                }
+
+
+                const existingMachine =
+                  await getMachineFromDb(
+                    machineId
+                  );
+
+
+                if (
+                  existingMachine &&
+                  existingMachine.machineSecretHash
+                ) {
+
+                  console.warn(
+                    `⚠️  Rejected set_secret for ${machineId} — ` +
+                    `already has a per-machine secret. Use the ` +
+                    `owner-authenticated /rotate-secret endpoint instead.`
+                  );
+
+                  sendJson(
+                    ws,
+                    {
+                      type: "secret_set",
+                      success: false,
+                      message:
+                        "This machine already has a secret. " +
+                        "Use POST /api/machine/:machineId/rotate-secret instead.",
+                    }
+                  );
+
+                  return;
+
+                }
+
+
+                await updateMachineRecord(
+                  machineId,
+                  {
+                    machineSecretHash:
+                      hashMachineSecret(newSecret),
+                  }
+                );
+
+
+                console.log(
+                  `🔑 Machine ${machineId} self-migrated to a ` +
+                  `per-machine secret`
+                );
+
+
+                sendJson(
+                  ws,
+                  {
+                    type: "secret_set",
+                    success: true,
+                    message: "Secret saved. Use it from now on.",
+                  }
+                );
+
+
+              } catch (error) {
+
+                console.error(
+                  `❌ set_secret failed [${machineId}]:`,
+                  error.message
+                );
+
+                sendJson(
+                  ws,
+                  {
+                    type: "secret_set",
+                    success: false,
+                    message: "Server error while saving secret",
+                  }
+                );
+
+              }
 
               return;
 
