@@ -25,6 +25,7 @@ const {
 const {
   getMachine: getMachineFromDb,
   updateMachine: updateMachineRecord,
+  ensureMachineExists,
 } = require("./machineRepository");
 
 const {
@@ -615,6 +616,35 @@ function setupMachineSocket(
                 "✅ Machine registered:",
                 machineId
               );
+
+
+              // =================================
+              // ENSURE FIRESTORE DOC EXISTS
+              // =================================
+              //
+              // For a brand-new machine connecting for the very
+              // first time, no Firestore record exists yet. Make
+              // sure one does BEFORE trying to generate a pairing
+              // code — otherwise the very first connection would
+              // silently miss its pairing code (it would only
+              // appear starting from the next reconnect).
+              //
+              // =================================
+
+              try {
+
+                await ensureMachineExists(
+                  machineId
+                );
+
+              } catch (error) {
+
+                console.error(
+                  `⚠️ ensureMachineExists failed [${machineId}]:`,
+                  error.message
+                );
+
+              }
 
 
               // =================================
