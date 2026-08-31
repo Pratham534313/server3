@@ -192,6 +192,7 @@ async function getMachineLogs(machineId, { date } = {}) {
 // ========================================
 
 module.exports = {
+  pool,
   ensureCommandLogsTable,
   logCommandSent,
   logCommandAck,
