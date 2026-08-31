@@ -1856,6 +1856,7 @@
 //   disconnectMachineSocket,
 
 // };
+
 const WebSocket = require("ws");
 
 const {
@@ -1890,6 +1891,10 @@ const {
 const {
   logCommandAck,
 } = require("./commandLogRepository");
+
+const {
+  logAuditEvent,
+} = require("./auditLogRepository");
 
 
 // ========================================
@@ -2450,6 +2455,15 @@ function setupMachineSocket(
                 );
 
 
+                logAuditEvent(
+                  "AUTH_FAILED",
+                  {
+                    machineId: requestedMachineId,
+                    details: { listenerId },
+                  }
+                ).catch(() => {});
+
+
                 sendJson(
                   ws,
                   {
@@ -2466,6 +2480,19 @@ function setupMachineSocket(
                 ws.close();
 
                 return;
+
+              }
+
+
+              if (authResult.legacy) {
+
+                logAuditEvent(
+                  "AUTH_LEGACY_FALLBACK",
+                  {
+                    machineId: requestedMachineId,
+                    details: { listenerId },
+                  }
+                ).catch(() => {});
 
               }
 
@@ -2869,6 +2896,16 @@ function setupMachineSocket(
                 );
 
 
+                logAuditEvent(
+                  "UNAUTHORIZED_ACCESS",
+                  {
+                    machineId: requestedMachineId,
+                    userId: uid,
+                    details: { source: "websocket" },
+                  }
+                ).catch(() => {});
+
+
                 sendJson(
                   ws,
                   {
@@ -3155,6 +3192,12 @@ function setupMachineSocket(
                     `owner-authenticated /rotate-secret endpoint instead.`
                   );
 
+
+                  logAuditEvent(
+                    "SECRET_MIGRATION_REJECTED",
+                    { machineId }
+                  ).catch(() => {});
+
                   sendJson(
                     ws,
                     {
@@ -3184,6 +3227,12 @@ function setupMachineSocket(
                   `🔑 Machine ${machineId} self-migrated to a ` +
                   `per-machine secret`
                 );
+
+
+                logAuditEvent(
+                  "SECRET_MIGRATED",
+                  { machineId }
+                ).catch(() => {});
 
 
                 sendJson(
