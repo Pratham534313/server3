@@ -1,3 +1,1224 @@
+// const express = require("express");
+
+// const rateLimit = require("express-rate-limit");
+
+// const verifyToken =
+//   require("../middleware/auth");
+
+// const {
+//   getMachine,
+//   getAllMachines,
+//   registerMachine,
+//   markCommandSent,
+//   checkMachineOwnership,
+//   createUserMachine,
+//   getUserMachines,
+// } = require("../services/machineService");
+
+// const {
+//   sendToMachine,
+//   isMachineConnected,
+// } = require("../services/machineSocket");
+
+// const {
+//   getMachine: getMachineFromDb,
+//   updateMachine,
+// } = require("../services/machineRepository");
+
+// const {
+//   logCommandSent,
+//   getMachineLogs,
+// } = require("../services/commandLogRepository");
+
+// const {
+//   hashMachineSecret,
+//   generateMachineSecret,
+// } = require("../services/machineAuth");
+
+// const {
+//   isValidCommand,
+// } = require("../services/commandValidation");
+
+// const router =
+//   express.Router();
+
+
+// // ========================================
+// // RATE LIMITERS
+// // ========================================
+// //
+// // Pairing codes are only 6 digits (1,000,000 combinations) with
+// // a 10-minute expiry — without a limiter here they're brute-
+// // forceable well within that window.
+// //
+// // ========================================
+
+// const pairLimiter = rateLimit({
+
+//   windowMs: 15 * 60 * 1000, // 15 minutes
+
+//   limit: 10, // 10 attempts per IP per window
+
+//   standardHeaders: true,
+
+//   legacyHeaders: false,
+
+//   message: {
+//     success: false,
+//     message:
+//       "Too many pairing attempts. Please try again later.",
+//   },
+
+// });
+
+// const commandLimiter = rateLimit({
+
+//   windowMs: 60 * 1000, // 1 minute
+
+//   limit: 60, // generous — legitimate operation sends far fewer
+
+//   standardHeaders: true,
+
+//   legacyHeaders: false,
+
+//   message: {
+//     success: false,
+//     message:
+//       "Too many commands sent. Please slow down.",
+//   },
+
+// });
+
+
+// // ========================================
+// // GET MY MACHINES
+// // ========================================
+
+// router.get(
+//   "/",
+//   verifyToken,
+//   async (req, res) => {
+
+//     try {
+
+//       const machines =
+//         await getUserMachines(
+//           req.user.uid
+//         );
+
+//       res.json({
+
+//         success: true,
+
+//         machines,
+
+//       });
+
+//     } catch (error) {
+
+//       console.error(
+//         "Machine list error:",
+//         error.message
+//       );
+
+//       res.status(500).json({
+
+//         success: false,
+
+//         message:
+//           "Failed to get machines",
+
+//       });
+
+//     }
+
+//   }
+// );
+
+
+// // ========================================
+// // GET MACHINE STATUS
+// // ========================================
+
+// router.get(
+//   "/:machineId/status",
+//   verifyToken,
+//   async (req, res) => {
+
+//     try {
+
+//       const {
+//         machineId,
+//       } = req.params;
+
+
+//       // ==================================
+//       // OWNERSHIP
+//       // ==================================
+
+//       const owner =
+//         await checkMachineOwnership(
+//           machineId,
+//           req.user.uid
+//         );
+
+
+//       if (!owner) {
+
+//         return res.status(403).json({
+
+//           success: false,
+
+//           message:
+//             "You do not have access to this machine",
+
+//         });
+
+//       }
+
+
+//       // ==================================
+//       // RUNTIME MACHINE
+//       // ==================================
+
+//       const machine =
+//         getMachine(
+//           machineId
+//         );
+
+
+//       if (!machine) {
+
+//         return res.status(404).json({
+
+//           success: false,
+
+//           message:
+//             "Machine is not currently connected",
+
+//         });
+
+//       }
+
+
+//       res.json({
+
+//         success: true,
+
+//         machine,
+
+//       });
+
+//     } catch (error) {
+
+//       console.error(
+//         "Machine status error:",
+//         error.message
+//       );
+
+//       res.status(500).json({
+
+//         success: false,
+
+//         message:
+//           "Failed to get machine status",
+
+//       });
+
+//     }
+
+//   }
+// );
+
+
+// // ========================================
+// // PAIR MACHINE
+// // ========================================
+// //
+// // Website sends:
+// //
+// // {
+// //   machineId: "D885D1ABC31C",
+// //   pairingCode: "977343"
+// // }
+// //
+// // Server verifies:
+// //
+// // 1. Machine exists
+// // 2. Machine is not already paired
+// // 3. Pairing code matches
+// // 4. Code is not expired
+// // 5. Logged-in Firebase user becomes owner
+// //
+// // ========================================
+
+// router.post(
+//   "/pair",
+//   pairLimiter,
+//   verifyToken,
+//   async (req, res) => {
+
+//     try {
+
+//       const {
+//         machineId,
+//         pairingCode,
+//       } = req.body;
+
+
+//       // ==================================
+//       // VALIDATION
+//       // ==================================
+
+//       if (!machineId) {
+
+//         return res.status(400).json({
+
+//           success: false,
+
+//           message:
+//             "machineId is required",
+
+//         });
+
+//       }
+
+
+//       if (!pairingCode) {
+
+//         return res.status(400).json({
+
+//           success: false,
+
+//           message:
+//             "pairingCode is required",
+
+//         });
+
+//       }
+
+
+//       // ==================================
+//       // NORMALIZE
+//       // ==================================
+
+//       const normalizedMachineId =
+//         String(
+//           machineId
+//         ).trim();
+
+
+//       const normalizedPairingCode =
+//         String(
+//           pairingCode
+//         ).trim();
+
+
+//       // ==================================
+//       // VALIDATE CODE FORMAT
+//       // ==================================
+
+//       if (
+//         !/^\d{6}$/.test(
+//           normalizedPairingCode
+//         )
+//       ) {
+
+//         return res.status(400).json({
+
+//           success: false,
+
+//           message:
+//             "Pairing code must be exactly 6 digits",
+
+//         });
+
+//       }
+
+
+//       // ==================================
+//       // GET MACHINE
+//       // ==================================
+
+//       const machine =
+//         await getMachineFromDb(
+//           normalizedMachineId
+//         );
+
+
+//       if (!machine) {
+
+//         return res.status(404).json({
+
+//           success: false,
+
+//           message:
+//             "Machine not found",
+
+//         });
+
+//       }
+
+
+//       // ==================================
+//       // ALREADY PAIRED
+//       // ==================================
+
+//       if (
+//         machine.paired === true ||
+//         machine.ownerId
+//       ) {
+
+//         // Same user already owns it
+//         if (
+//           machine.ownerId ===
+//           req.user.uid
+//         ) {
+
+//           return res.status(200).json({
+
+//             success: true,
+
+//             alreadyPaired: true,
+
+//             message:
+//               "Machine is already paired with your account",
+
+//             machine: {
+
+//               ...machine,
+
+//               pairingCode:
+//                 null,
+
+//             },
+
+//           });
+
+//         }
+
+
+//         return res.status(409).json({
+
+//           success: false,
+
+//           message:
+//             "Machine is already paired with another account",
+
+//         });
+
+//       }
+
+
+//       // ==================================
+//       // CHECK PAIRING CODE EXISTS
+//       // ==================================
+
+//       if (
+//         !machine.pairingCode ||
+//         !machine.pairingCodeCreatedAt
+//       ) {
+
+//         return res.status(400).json({
+
+//           success: false,
+
+//           message:
+//             "Machine does not have an active pairing code",
+
+//         });
+
+//       }
+
+
+//       // ==================================
+//       // CHECK CODE
+//       // ==================================
+
+//       if (
+//         String(
+//           machine.pairingCode
+//         ) !==
+//         normalizedPairingCode
+//       ) {
+
+//         return res.status(401).json({
+
+//           success: false,
+
+//           message:
+//             "Invalid pairing code",
+
+//         });
+
+//       }
+
+
+//       // ==================================
+//       // CHECK EXPIRY
+//       // ==================================
+
+//       const createdAt =
+//         new Date(
+//           machine.pairingCodeCreatedAt
+//         ).getTime();
+
+
+//       if (
+//         Number.isNaN(
+//           createdAt
+//         )
+//       ) {
+
+//         return res.status(400).json({
+
+//           success: false,
+
+//           message:
+//             "Invalid pairing code timestamp",
+
+//         });
+
+//       }
+
+
+//       // 10 minutes
+//       const PAIRING_CODE_LIFETIME =
+//         10 * 60 * 1000;
+
+
+//       const now =
+//         Date.now();
+
+
+//       const expired =
+//         now -
+//         createdAt >
+//         PAIRING_CODE_LIFETIME;
+
+
+//       if (expired) {
+
+//         return res.status(410).json({
+
+//           success: false,
+
+//           message:
+//             "Pairing code has expired. Generate a new code from the machine.",
+
+//         });
+
+//       }
+
+
+//       // ==================================
+//       // PAIR MACHINE
+//       // ==================================
+
+//       const updatedMachine =
+//         await updateMachine(
+
+//           normalizedMachineId,
+
+//           {
+
+//             ownerId:
+//               req.user.uid,
+
+//             paired:
+//               true,
+
+//             // Code is single-use
+//             pairingCode:
+//               null,
+
+//             pairingCodeCreatedAt:
+//               null,
+
+//             pairedAt:
+//               new Date().toISOString(),
+
+//           }
+
+//         );
+
+
+//       // ==================================
+//       // SUCCESS
+//       // ==================================
+
+//       console.log(
+//         `🔗 Machine paired successfully: ${normalizedMachineId} → ${req.user.uid}`
+//       );
+
+
+//       return res.status(200).json({
+
+//         success: true,
+
+//         message:
+//           "Machine paired successfully",
+
+//         machine: {
+
+//           machineId:
+//             updatedMachine.machineId,
+
+//           ownerId:
+//             updatedMachine.ownerId,
+
+//           name:
+//             updatedMachine.name,
+
+//           paired:
+//             updatedMachine.paired,
+
+//           connected:
+//             updatedMachine.connected,
+
+//           status:
+//             updatedMachine.status,
+
+//           firmwareVersion:
+//             updatedMachine.firmwareVersion,
+
+//         },
+
+//       });
+
+//     } catch (error) {
+
+//       console.error(
+//         "Machine pairing error:",
+//         error.message
+//       );
+
+
+//       return res.status(500).json({
+
+//         success: false,
+
+//         message:
+//           "Failed to pair machine",
+
+//       });
+
+//     }
+
+//   }
+// );
+
+
+// // ========================================
+// // CREATE / REGISTER MACHINE
+// // ========================================
+
+// router.post(
+//   "/register",
+//   verifyToken,
+//   async (req, res) => {
+
+//     try {
+
+//       const {
+//         machineId,
+//         name,
+//       } = req.body;
+
+
+//       if (!machineId) {
+
+//         return res.status(400).json({
+
+//           success: false,
+
+//           message:
+//             "machineId is required",
+
+//         });
+
+//       }
+
+
+//       // ==================================
+//       // CHECK EXISTING MACHINE
+//       // ==================================
+
+//       const existing =
+//         await getMachineFromDb(
+//           machineId
+//         );
+
+
+//       if (existing) {
+
+//         return res.status(409).json({
+
+//           success: false,
+
+//           message:
+//             "Machine is already registered",
+
+//         });
+
+//       }
+
+
+//       // ==================================
+//       // CREATE
+//       // ==================================
+
+//       const machine =
+//         await createUserMachine(
+
+//           machineId,
+
+//           req.user.uid,
+
+//           name ||
+//             "AlphaCut Machine"
+
+//         );
+
+
+//       // ==================================
+//       // ISSUE PER-MACHINE SECRET
+//       // ==================================
+//       //
+//       // Generated once, returned in PLAINTEXT exactly once here.
+//       // Only the hash is stored. Copy this into the RPi agent's
+//       // PRANOVA_MACHINE_SECRET config — it will never be shown
+//       // again (use /rotate-secret to issue a new one if lost).
+//       //
+//       // ==================================
+
+//       const machineSecret =
+//         generateMachineSecret();
+
+//       await updateMachine(
+//         machineId,
+//         {
+//           machineSecretHash:
+//             hashMachineSecret(machineSecret),
+//         }
+//       );
+
+
+//       res.status(201).json({
+
+//         success: true,
+
+//         message:
+//           "Machine registered successfully. Save the machineSecret " +
+//           "now — it will not be shown again.",
+
+//         machine,
+
+//         machineSecret,
+
+//       });
+
+//     } catch (error) {
+
+//       console.error(
+//         "Machine registration error:",
+//         error.message
+//       );
+
+
+//       res.status(500).json({
+
+//         success: false,
+
+//         message:
+//           "Failed to register machine",
+
+//       });
+
+//     }
+
+//   }
+// );
+
+
+// // ========================================
+// // ROTATE MACHINE SECRET
+// // ========================================
+// //
+// // Issues a brand-new per-machine secret for an already-registered
+// // machine — used both to migrate machines that were registered
+// // before this feature existed (still on the legacy shared secret)
+// // and to rotate a secret that may have been exposed.
+// //
+// // Owner-only. Returns the new secret in plaintext exactly once.
+// //
+// // ========================================
+
+// router.post(
+//   "/:machineId/rotate-secret",
+//   verifyToken,
+//   async (req, res) => {
+
+//     try {
+
+//       const {
+//         machineId,
+//       } = req.params;
+
+
+//       const owner =
+//         await checkMachineOwnership(
+//           machineId,
+//           req.user.uid
+//         );
+
+
+//       if (!owner) {
+
+//         return res.status(403).json({
+
+//           success: false,
+
+//           message:
+//             "You do not have access to this machine",
+
+//         });
+
+//       }
+
+
+//       const machineSecret =
+//         generateMachineSecret();
+
+//       await updateMachine(
+//         machineId,
+//         {
+//           machineSecretHash:
+//             hashMachineSecret(machineSecret),
+//         }
+//       );
+
+
+//       console.log(
+//         `🔑 Machine secret rotated [${machineId}] by ${req.user.uid}`
+//       );
+
+
+//       res.json({
+
+//         success: true,
+
+//         message:
+//           "New machine secret issued. Save it now — it will not " +
+//           "be shown again. Update the RPi agent's " +
+//           "PRANOVA_MACHINE_SECRET and restart it.",
+
+//         machineId,
+
+//         machineSecret,
+
+//       });
+
+//     } catch (error) {
+
+//       console.error(
+//         "Rotate secret error:",
+//         error.message
+//       );
+
+//       res.status(500).json({
+
+//         success: false,
+
+//         message:
+//           "Failed to rotate machine secret",
+
+//       });
+
+//     }
+
+//   }
+// );
+
+
+// // ========================================
+// // SEND COMMAND
+// // ========================================
+
+// router.post(
+//   "/command",
+//   commandLimiter,
+//   verifyToken,
+//   async (req, res) => {
+
+//     try {
+
+//       const {
+//         machineId,
+//         command,
+//       } = req.body;
+
+
+//       // ==================================
+//       // VALIDATION
+//       // ==================================
+
+//       if (!machineId) {
+
+//         return res.status(400).json({
+
+//           success: false,
+
+//           message:
+//             "machineId is required",
+
+//         });
+
+//       }
+
+
+//       if (!command) {
+
+//         return res.status(400).json({
+
+//           success: false,
+
+//           message:
+//             "command is required",
+
+//         });
+
+//       }
+
+
+//       // ==================================
+//       // OWNERSHIP
+//       // ==================================
+
+//       const owner =
+//         await checkMachineOwnership(
+//           machineId,
+//           req.user.uid
+//         );
+
+
+//       if (!owner) {
+
+//         console.log(
+//           `🚫 Unauthorized machine access: ${req.user.uid} → ${machineId}`
+//         );
+
+
+//         return res.status(403).json({
+
+//           success: false,
+
+//           message:
+//             "You do not have access to this machine",
+
+//         });
+
+//       }
+
+
+//       // ==================================
+//       // COMMAND ALLOWLIST
+//       // ==================================
+//       //
+//       // Reject anything that isn't a recognized AlphaCut/FluidNC
+//       // command BEFORE it's ever forwarded to the machine. See
+//       // services/commandValidation.js.
+//       //
+//       // ==================================
+
+//       if (!isValidCommand(command)) {
+
+//         console.log(
+//           `🚫 Rejected invalid command from ${req.user.uid} ` +
+//           `→ ${machineId}: ${JSON.stringify(command).slice(0, 100)}`
+//         );
+
+//         return res.status(400).json({
+
+//           success: false,
+
+//           message:
+//             "Command is not a recognized AlphaCut/FluidNC command",
+
+//         });
+
+//       }
+
+
+//       // ==================================
+//       // CONNECTION
+//       // ==================================
+
+//       if (
+//         !isMachineConnected(
+//           machineId
+//         )
+//       ) {
+
+//         return res.status(503).json({
+
+//           success: false,
+
+//           message:
+//             "Machine is not connected",
+
+//           machineId,
+
+//         });
+
+//       }
+
+
+//       // ==================================
+//       // SEND COMMAND
+//       // ==================================
+
+//       const sent =
+//         sendToMachine(
+
+//           machineId,
+
+//           {
+
+//             type:
+//               "command",
+
+//             command,
+
+//             timestamp:
+//               new Date().toISOString(),
+
+//             requestedBy:
+//               req.user.uid,
+
+//           }
+
+//         );
+
+
+//       if (!sent) {
+
+//         return res.status(503).json({
+
+//           success: false,
+
+//           message:
+//             "Failed to send command",
+
+//           machineId,
+
+//         });
+
+//       }
+
+
+//       // ==================================
+//       // UPDATE COMMAND STATE
+//       // ==================================
+
+//       await markCommandSent(
+
+//         machineId,
+
+//         command
+
+//       );
+
+
+//       // ==================================
+//       // LOG COMMAND (Postgres)
+//       // ==================================
+//       // Fire-and-forget: a logging failure should never
+//       // block the actual machine command response.
+
+//       logCommandSent(
+//         machineId,
+//         command,
+//         req.user.uid
+//       ).catch((error) => {
+
+//         console.error(
+//           `⚠️ Command log insert failed [${machineId}]:`,
+//           error.message
+//         );
+
+//       });
+
+
+//       // ==================================
+//       // RESPONSE
+//       // ==================================
+
+//       res.json({
+
+//         success: true,
+
+//         message:
+//           "Command sent to machine",
+
+//         machineId,
+
+//         command,
+
+//         requestedBy:
+//           req.user.uid,
+
+//       });
+
+//     } catch (error) {
+
+//       console.error(
+//         "Machine command error:",
+//         error.message
+//       );
+
+
+//       res.status(500).json({
+
+//         success: false,
+
+//         message:
+//           "Failed to send machine command",
+
+//       });
+
+//     }
+
+//   }
+// );
+
+
+// // ========================================
+// // GET MACHINE COMMAND LOGS
+// // ========================================
+// //
+// // GET /api/machine/:machineId/logs
+// // GET /api/machine/:machineId/logs?date=2026-08-21
+// //
+// // Defaults to today (UTC) if no ?date is given.
+// //
+// // ========================================
+
+// router.get(
+//   "/:machineId/logs",
+//   verifyToken,
+//   async (req, res) => {
+
+//     try {
+
+//       const {
+//         machineId,
+//       } = req.params;
+
+//       const {
+//         date,
+//       } = req.query;
+
+
+//       // ==================================
+//       // VALIDATE DATE FORMAT (if provided)
+//       // ==================================
+
+//       if (
+//         date &&
+//         !/^\d{4}-\d{2}-\d{2}$/.test(date)
+//       ) {
+
+//         return res.status(400).json({
+
+//           success: false,
+
+//           message:
+//             "date must be in YYYY-MM-DD format",
+
+//         });
+
+//       }
+
+
+//       // ==================================
+//       // OWNERSHIP
+//       // ==================================
+
+//       const owner =
+//         await checkMachineOwnership(
+//           machineId,
+//           req.user.uid
+//         );
+
+
+//       if (!owner) {
+
+//         return res.status(403).json({
+
+//           success: false,
+
+//           message:
+//             "You do not have access to this machine",
+
+//         });
+
+//       }
+
+
+//       // ==================================
+//       // FETCH LOGS
+//       // ==================================
+
+//       const logs =
+//         await getMachineLogs(
+//           machineId,
+//           { date }
+//         );
+
+
+//       res.json({
+
+//         success: true,
+
+//         machineId,
+
+//         date:
+//           date ||
+//           new Date().toISOString().slice(0, 10),
+
+//         logs,
+
+//       });
+
+//     } catch (error) {
+
+//       console.error(
+//         "Machine logs error:",
+//         error.message
+//       );
+
+//       res.status(500).json({
+
+//         success: false,
+
+//         message:
+//           "Failed to get machine logs",
+
+//       });
+
+//     }
+
+//   }
+// );
+
+
+// // ========================================
+// // EXPORT
+// // ========================================
+
+// module.exports =
+//   router;
 const express = require("express");
 
 const rateLimit = require("express-rate-limit");
@@ -29,6 +1250,10 @@ const {
   logCommandSent,
   getMachineLogs,
 } = require("../services/commandLogRepository");
+
+const {
+  logAuditEvent,
+} = require("../services/auditLogRepository");
 
 const {
   hashMachineSecret,
@@ -552,6 +1777,15 @@ router.post(
       );
 
 
+      logAuditEvent(
+        "PAIRING_COMPLETED",
+        {
+          machineId: normalizedMachineId,
+          userId: req.user.uid,
+        }
+      ).catch(() => {});
+
+
       return res.status(200).json({
 
         success: true,
@@ -804,6 +2038,15 @@ router.post(
       );
 
 
+      logAuditEvent(
+        "SECRET_ROTATED",
+        {
+          machineId,
+          userId: req.user.uid,
+        }
+      ).catch(() => {});
+
+
       res.json({
 
         success: true,
@@ -909,6 +2152,16 @@ router.post(
         );
 
 
+        logAuditEvent(
+          "UNAUTHORIZED_ACCESS",
+          {
+            machineId,
+            userId: req.user.uid,
+            details: { source: "rest_command" },
+          }
+        ).catch(() => {});
+
+
         return res.status(403).json({
 
           success: false,
@@ -937,6 +2190,17 @@ router.post(
           `🚫 Rejected invalid command from ${req.user.uid} ` +
           `→ ${machineId}: ${JSON.stringify(command).slice(0, 100)}`
         );
+
+
+        logAuditEvent(
+          "COMMAND_REJECTED",
+          {
+            machineId,
+            userId: req.user.uid,
+            details: { command: String(command).slice(0, 200) },
+          }
+        ).catch(() => {});
+
 
         return res.status(400).json({
 
